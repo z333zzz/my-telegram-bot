@@ -1,7 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 
 // [1] Votre token
-const BOT_TOKEN = '7912803547:AAH3bbL5pP6Av8s1BVqQWG1gvzamxYJje88';
+const BOT_TOKEN = 'VOTRE_BOT_TOKEN_ICI';
 
 // [2] ID de l'admin
 const ADMIN_CHAT_ID = 1567991274;
@@ -18,11 +18,6 @@ const GIFS_LANG = {
 };
 
 // [5] Textes par langue
-//    - welcomeProject: le message qui propose Scama, Letter, Bot
-//    - questionScama: question unique pour Scama
-//    - questionLetter: question unique pour Letter
-//    - questionBot: question unique pour Bot
-//    - final: message final
 const TEXTS = {
   fr: {
     welcomeProject: "Choisissez le projet :",
@@ -54,27 +49,16 @@ const TEXTS = {
   }
 };
 
-// ---------------------------------------------------------------------
-// userStates[chatId] = {
-//   language: 'fr'|'en'|'zh'|'ru',
-//   projectChosen: 'scama'|'letter'|'bot'| null,
-//   awaitingAnswer: boolean, // pour savoir si on attend le texte libre
-//   answers: []
-// }
-// ---------------------------------------------------------------------
 const userStates = {};
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 // ---------------------------------------------------------------------
-// 1) /start => GIF commun + choix de langue
+// 1) /start => GIF + choix de langue DANS UN SEUL MESSAGE
 // ---------------------------------------------------------------------
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const userName = msg.from.first_name || "Utilisateur";
-
-  // Envoyer GIF commun
-  await bot.sendAnimation(chatId, WELCOME_GIF);
 
   // Notifier l'admin
   await bot.sendMessage(
@@ -82,8 +66,9 @@ bot.onText(/\/start/, async (msg) => {
     `Nouvel utilisateur : ${userName} (chat_id: ${chatId}) a démarré le bot.`
   );
 
-  // Proposer la langue
-  await bot.sendMessage(chatId, "Choisissez votre langue / Choose your language:", {
+  // Envoyer le GIF avec le message
+  await bot.sendAnimation(chatId, WELCOME_GIF, {
+    caption: "Choisissez votre langue / Choose your language :",
     reply_markup: {
       inline_keyboard: [
         [
@@ -100,28 +85,24 @@ bot.onText(/\/start/, async (msg) => {
 });
 
 // ---------------------------------------------------------------------
-// 2) callback_query => gère le choix de langue OU le choix de projet
+// 2) callback_query => gère le choix de langue + projet dans un seul message
 // ---------------------------------------------------------------------
 bot.on('callback_query', async (callbackQuery) => {
-  const data   = callbackQuery.data;          // ex: "lang_fr", "proj_scama"
+  const data   = callbackQuery.data;
   const chatId = callbackQuery.message.chat.id;
   const msgId  = callbackQuery.message.message_id;
 
-  // Si data = "lang_fr" / "lang_en" / ...
+  // 2.1) Si choix de la langue
   if (data.startsWith("lang_")) {
-    const chosenLang = data.split("_")[1]; // fr, en, zh, ru
+    const chosenLang = data.split("_")[1];
 
-    // Retirer le clavier des langues
+    // Supprimer l'ancien clavier
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
       chat_id: chatId,
       message_id: msgId
     });
 
-    // Envoyer GIF spécifique
-    const gif = GIFS_LANG[chosenLang] || WELCOME_GIF;
-    await bot.sendAnimation(chatId, gif);
-
-    // Initialiser l'état
+    // Stocker la langue choisie
     userStates[chatId] = {
       language: chosenLang,
       projectChosen: null,
@@ -129,8 +110,9 @@ bot.on('callback_query', async (callbackQuery) => {
       answers: []
     };
 
-    // Proposer Scama, Letter, Bot
-    await bot.sendMessage(chatId, TEXTS[chosenLang].welcomeProject, {
+    // Envoyer le GIF + question projet DANS UN SEUL MESSAGE
+    await bot.sendAnimation(chatId, GIFS_LANG[chosenLang], {
+      caption: TEXTS[chosenLang].welcomeProject,
       reply_markup: {
         inline_keyboard: [
           [
@@ -142,13 +124,13 @@ bot.on('callback_query', async (callbackQuery) => {
       }
     });
   }
-  // Sinon, data = "proj_scama" / "proj_letter" / "proj_bot"
+  // 2.2) Si choix du projet (Scama / Letter / Bot)
   else if (data.startsWith("proj_")) {
-    const project = data.split("_")[1]; // scama / letter / bot
+    const project = data.split("_")[1];
     const state = userStates[chatId];
     if (!state) return;
 
-    // Retirer le clavier "Scama, Letter, Bot"
+    // Supprimer l'ancien clavier
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
       chat_id: chatId,
       message_id: msgId
@@ -157,14 +139,19 @@ bot.on('callback_query', async (callbackQuery) => {
     // Stocker le projet
     state.projectChosen = project;
 
-    // En fonction du projet, poser UNE question
+    // Envoyer le GIF + Question DANS UN SEUL MESSAGE
+    let gif = GIFS_LANG[state.language] || WELCOME_GIF;
+    let question = "";
+
     if (project === "scama") {
-      bot.sendMessage(chatId, TEXTS[state.language].questionScama);
+      question = TEXTS[state.language].questionScama;
     } else if (project === "letter") {
-      bot.sendMessage(chatId, TEXTS[state.language].questionLetter);
+      question = TEXTS[state.language].questionLetter;
     } else if (project === "bot") {
-      bot.sendMessage(chatId, TEXTS[state.language].questionBot);
+      question = TEXTS[state.language].questionBot;
     }
+
+    await bot.sendAnimation(chatId, gif, { caption: question });
 
     // On attend la réponse en texte libre
     state.awaitingAnswer = true;
@@ -172,27 +159,21 @@ bot.on('callback_query', async (callbackQuery) => {
 });
 
 // ---------------------------------------------------------------------
-// 3) on('message') => si on attend la réponse libre (Scama / Letter / Bot)
+// 3) on('message') => Stocke la réponse et envoie le message final
 // ---------------------------------------------------------------------
 bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text   = msg.text || "";
 
-  // Si pas d'état, on ignore
-  if (!userStates[chatId]) return;
-  if (text.startsWith("/start")) return; // on ignore un nouveau /start
+  // Vérifier si on attend une réponse
+  if (!userStates[chatId] || !userStates[chatId].awaitingAnswer) return;
 
   const state = userStates[chatId];
-  // Vérifier si on est en attente d'une réponse
-  if (!state.awaitingAnswer) {
-    // On ignore
-    return;
-  }
 
-  // On stocke la réponse
+  // Stocker la réponse
   state.answers.push(text);
 
-  // On envoie le message final
+  // Envoyer le message final
   bot.sendMessage(chatId, TEXTS[state.language].final);
 
   // Notifier l'admin
@@ -202,7 +183,7 @@ bot.on('message', (msg) => {
     `Utilisateur (chat_id: ${chatId})\nLangue: ${state.language}\nProjet: ${state.projectChosen}\nRéponse: ${answersJoined}`
   );
 
-  // Fin
+  // Fin du process pour cet utilisateur
   delete userStates[chatId];
 });
 
